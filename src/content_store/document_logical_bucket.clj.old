@@ -1,0 +1,83 @@
+(ns content-store.document-logical-bucket
+  (:require [clojurewerkz.welle.core :as wc]
+            [clojurewerkz.welle.buckets :as wb]
+            [clojurewerkz.welle.kv :as kv])
+  (:import com.basho.riak.client.http.util.Constants))
+
+(def BUCKET "document-logical-bucket")
+
+;; {
+;;  :id "id of the object",
+;;  :topics (
+;;    {
+;;     :id "id of the topic",
+;;     :probability "probability of the topic expressed as a double"
+;;    }
+;;  )
+;; }
+
+
+(defn fetch[key]
+  (wc/with-client
+    (wc/connect)
+    (:value (:result (kv/fetch-one BUCKET key)))))
+
+(defn fetch-all[keys]
+  (wc/with-client
+    (wc/connect)
+    (reduce (fn[list key] (cons (fetch key) list)) () keys)))
+
+(defn store
+  "The value must of the form
+  {:modelling-status :FETCHED,
+   :uri ,
+   :meta-data {},
+   :delivery-status :FETCHED,
+   :summary-status :FETCHED}"
+  [key doc]
+  (wc/with-client
+    (wc/connect)
+    (kv/store BUCKET key doc
+      :content-type com.basho.riak.client.http.util.Constants/CTYPE_JSON_UTF8
+      :indexes {"delivery-status" (:delivery-status doc),
+                "summary-status" (:summary-status doc),
+                "modelling-status" (:modelling-status doc)})))
+
+(def documents '({:id "1"
+                 :uri "file://Users/vvaidyan/Documents/one.txt"
+                 :delivery-status "FETCHED"
+                 :summary-status "FETCHED"
+                 :modelling-status "FETCHED"
+                 :tags '("networking", "router")
+                 :file-type :PDF
+                 :topic-category #{"topic" "category"}
+                 :summary "Summary for one"},
+                 {:id "2"
+                  :uri "file://Users/vvaidyan/Documents/two.txt"
+                  :delivery-status "FETCHED"
+                  :summary-status "FETCHED"
+                  :modelling-status "FETCHED"
+                  :tags '("agile", "pairing")
+                  :file-type :PDF
+                  :topic-category #{"topic" "category"}
+                  :summary "Summary for two"},
+                 {:id "3"
+                  :uri "file://Users/vvaidyan/Documents/three.txt"
+                  :delivery-status "FETCHED"
+                  :summary-status "FETCHED"
+                  :modelling-status "FETCHED"
+                  :tags '("tdd", "testing")
+                  :file-type :PDF
+                  :topic-category #{"topic" "category"}
+                  :summary "Summary for three"}))
+
+(defn seed[documents]
+  (wc/with-client
+    (wc/connect)
+    (map (fn[doc]
+           (kv/store "documents" (:id doc) doc
+             :content-type com.basho.riak.client.http.util.Constants/CTYPE_JSON_UTF8
+             :indexes {"delivery-status" (:delivery-status doc),
+                       "summary-status" (:summary-status doc),
+                       "modelling-status" (:modelling-status doc)}))
+      documents)))

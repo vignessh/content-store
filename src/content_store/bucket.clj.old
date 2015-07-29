@@ -1,0 +1,79 @@
+(ns content-store.document-logical-bucket
+  (:require [clojurewerkz.welle.core :as wc]
+            [clojurewerkz.welle.buckets :as wb]
+            [clojurewerkz.welle.links :as links]
+            [clojurewerkz.welle.mr :as mr]
+            [clojurewerkz.welle.kv :as kv])
+  (:import com.basho.riak.client.http.util.Constants))
+
+(defn fetch[^String bucket-name ^String key]
+  (wc/with-client
+    (wc/connect)
+    (kv/fetch-one bucket-name key)))
+
+(defn fetch-all
+  ([^String bucket-name]
+    (wc/with-client
+      (wc/connect)
+      (fetch-all (wb/keys-in bucket-name))))
+  ([bucket-name keys]
+    (wc/with-client
+      (wc/connect)
+      (reduce #(conj %1 (fetch bucket-name %2)) () keys))))
+
+(defn store
+  [^String bucket-name
+   ^String key
+   item & {:keys [indexes links ^String link-name] :or {indexes () links ()}}]
+  (wc/with-client
+    (wc/connect)
+    (kv/store bucket-name key item
+      :content-type com.basho.riak.client.http.util.Constants/CTYPE_JSON_UTF8
+      :indexes (reduce #(assoc %1 %2 (item %2)) {} indexes)
+      :links (reduce #(conj %1 {:bucket bucket-name, :key %2, :tag link-name}) () links))))
+
+(defn fetch-using-index[^String bucket-name
+                        ^String key
+                        value]
+  (wc/with-client
+    (wc/connect)
+    (fetch-all bucket-name (kv/index-query bucket-name key value))))
+
+(defn fetch-linked[^String bucket-name
+                   ^String key
+                   ^String link-name]
+  (wc/with-client
+    (wc/connect)
+    (reduce #(conj %1 (:value %2)) ()
+      (first
+        (links/walk
+          (links/start-at bucket-name key)
+          (links/step bucket-name link-name true))))))
+
+(defn map-query[^String bucket-name & {:keys [args map-fn]}]
+  (wc/with-client
+    (wc/connect)
+    (mr/map-reduce
+      {:inputs bucket-name,
+       :query [{:map {:language "javascript",
+                      :arg args,
+                      :source map-fn}}]})))
+
+(defn- build-query[map-fn reduce-fn arg]
+  (let [query {}]
+    (->
+      (assoc query ))))
+
+(defn map-reduce-query[^String bucket-name & {:keys [map-fn reduce-fn arg]}]
+  (let [query []]
+    (->
+      (if-not (nil? map-fn)
+        (assoc! query ))
+      (if-not (nil? reduce-fn)
+        (assoc! query )
+      (wc/with-client
+        (wc/connect)
+        (mr/map-reduce
+          {:inputs bucket-name,
+           :query [{:map {:language "javascript", :source map-fn}}
+                   {:reduce {:language "javascript", :source reduce-fn}}]})))))

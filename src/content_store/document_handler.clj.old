@@ -1,0 +1,75 @@
+(ns content-store.document-handler
+  (:use compojure.core)
+  (:use ring.util.response)
+  (:require [compojure.handler :as handler]
+            [compojure.route :as route]
+            [ring.middleware.json :as middleware]
+            [content-store.document-bucket :as bucket]
+            [ring.middleware.keyword-params :as keyword-params]))
+
+
+(defn get-document[id]
+  (response (bucket/fetch {:key id})))
+
+(defn create-new-document[doc]
+  (->
+    (if (sequential? doc)
+      (doseq [d doc]
+        (bucket/store {:key (:id d) :doc d}))
+      (bucket/store {:key (:id doc) :doc doc}))
+    {:status 200}))
+
+(defn update-document[id doc]
+  (get-document id))
+
+(defn get-documents-by-file-type[file-type]
+  (response (bucket/fetch-using-index {:indexed-key "file-type" :value file-type})))
+
+(defn get-all-documents[]
+  (response (bucket/fetch-all)))
+
+(defn get-by-status[status]
+  (let [filtered-docs (bucket/fetch-using-index {:indexed-key "status" :value status})]
+    (response
+      (reduce #(cons (:id %2) %1) () filtered-docs))))
+
+(defn update-document-status[ids status]
+  (let [documents (bucket/fetch-all ids)
+        updated-docs (reduce #(conj %1 (assoc %2 :status status)) () documents)]
+    (->
+      (doseq [doc updated-docs]
+        (bucket/store {:key (:id doc) :doc doc}))
+      {:status 200})))
+
+(defn get-by-category[category]
+  (response
+    (bucket/fetch-for-category category)))
+
+(defn get-all-categories[]
+  (response
+    (first (bucket/fetch-all-categories))))
+
+(defroutes app-routes
+  (context "/documents" []
+    (defroutes documents-routes
+      (GET "/" [] (get-all-documents))
+      (GET "/filter/:file-type" [file-type] (get-documents-by-file-type file-type))
+      (GET "/preprocessed" [] (get-by-status "PREPROCESSED"))
+      (GET "/categorized" [] (get-by-status "CATEGORIZED"))
+      (GET "/category/:category" [category] (get-by-category category))
+      (GET "/categories" [] (get-all-categories))
+      (POST "/" {body :body} (create-new-document body))
+      (POST "/_status" {body :body} (update-document-status (:ids body) (:status body)))
+      (context "/:id" [id]
+        (defroutes document-routes
+          (GET "/" [] (get-document id))))))
+          ;(PUT "/" {body :body} (update-document id body))))))
+  (route/not-found "Not found"))
+
+(def app
+  (->
+    (handler/api app-routes)
+    (keyword-params/wrap-keyword-params)
+    (middleware/wrap-json-body {:keywords? true})
+    (middleware/wrap-json-response)))
+

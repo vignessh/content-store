@@ -1,0 +1,171 @@
+(ns content-store.document-bucket
+  (:require [clojurewerkz.welle.core :as wc]
+            [clojurewerkz.welle.buckets :as wb]
+            [clojurewerkz.welle.kv :as kv]
+            [clojurewerkz.welle.links :as links]
+            [clojurewerkz.welle.mr :as mr])
+  (:import com.basho.riak.client.http.util.Constants))
+
+(def BUCKET "documents")
+
+(defn fetch
+  "Fetches the value corresponding to the given key"
+  [{:keys [^String bucket
+           ^String key] :or {bucket BUCKET}}]
+    (wc/with-client
+      (wc/connect)
+      (:value (:result (kv/fetch-one bucket key)))))
+
+(defn fetch-all
+  "Fetches all the values corresponding to the keys supplied."
+  ([keys bucket]
+    (wc/with-client
+      (wc/connect)
+      (map (fn[key] (fetch {:key key :bucket bucket})) keys)))
+  ([keys]
+    (fetch-all keys BUCKET))
+  ([]
+    (wc/with-client
+      (wc/connect)
+      (fetch-all (wb/keys-in BUCKET) BUCKET))))
+
+
+(defn store
+  "The value of the document must be of the form
+  {:id 'id of the document'
+   :uri 'location of the document',
+   :meta_data {},
+   :correlation_id '',
+   :tags #{},
+   :file_type '',
+   :summary '',
+   :topic_category {'topic', 'category'},
+   :status :COMPLETED}.
+   Can supply additional links to add links to other documents in the same bucket."
+  [{:keys [^String key
+           doc
+           ^String bucket
+           indexes
+           links
+           ^String link-name]
+    :or {bucket BUCKET
+         indexes [:file_type :status]
+         links ()}}]
+    (wc/with-client
+      (wc/connect)
+      (kv/store bucket key doc
+        :content-type com.basho.riak.client.http.util.Constants/CTYPE_JSON_UTF8
+        :indexes (reduce (fn[m k] (assoc m k (doc k))) {} indexes)
+        :links (reduce (fn[l link] (conj l {:bucket bucket, :key link, :tag link-name})) () links))))
+
+(defn fetch-using-index
+  "Fetches *all* the documents that match the value and the given key"
+  [{:keys [^String bucket
+           ^String indexed-key
+           value] :or {bucket BUCKET}}]
+  (wc/with-client
+    (wc/connect)
+    (fetch-all (kv/index-query bucket indexed-key value) bucket)))
+
+(defn fetch-linked
+  "Fetch *all* the links given the key and the link name"
+  [{:keys [^String key
+           ^String bucket
+           ^String link-name]
+    :or {bucket BUCKET}}]
+  (wc/with-client
+    (wc/connect)
+    (reduce (fn[l doc] (conj l (:value doc))) ()
+      (first
+        (links/walk
+          (links/start-at bucket key)
+          (links/step bucket link-name true))))))
+
+(defn fetch-for-category[category & {:keys [^String bucket] :or {bucket BUCKET}}]
+  (wc/with-client
+    (wc/connect)
+    (mr/map-reduce {:inputs bucket,
+                    :query [{:map
+                              {
+                                :language "javascript",
+                                :arg category,
+                                :source
+                                  "function(riakObject, keyData, arg) {
+                                    var document = JSON.parse(riakObject.values[0].data);
+                                    var topicCategories = document.topic_category;
+                                    var result = [];
+
+                                    for (var topic in topicCategories) {
+                                        var categories = topicCategories[topic];
+
+                                        if (categories.indexOf(arg) >= 0) {
+                                          result.push(document);
+                                          break;
+                                        }
+                                    }
+
+                                    return result;
+                                  }"
+                              }}]})))
+
+(defn fetch-all-categories
+  ([] (fetch-all-categories BUCKET))
+  ([^String bucket]
+    (wc/with-client
+      (wc/connect)
+      (mr/map-reduce {:inputs bucket,
+                      :query [{:map
+                               {:language "javascript",
+                                :source "function(riakObject) {
+                                  var document = JSON.parse(riakObject.values[0].data);
+                                  var topicCategories = document.topic_category;
+                                  var categories = [];
+
+                                  for (var topic in topicCategories)
+                                    categories.push([topicCategories[topic], 1]);
+
+                                  return categories;
+                                }"}}
+                              {:reduce
+                               {:language "javascript",
+                                :source "function(categories) {
+                                  var result = [];
+                                  var categoryCount = {};
+                                  for (var idx = 0; idx < categories.length; idx++) {
+                                    var category = categories[idx][0];
+                                    if (categoryCount[category] === undefined)
+                                      categoryCount[category] = 0;
+
+                                    categoryCount[category]++;
+                                  }
+                                  result.push(categoryCount);
+                                  return result;
+                                }"}}]}))))
+
+(defn seed[documents]
+  (map (fn[doc] (store {:key (:id doc), :doc doc})) documents))
+
+(def documents '({:id "1"
+                  :uri "file://Users/vvaidyan/Documents/one.txt"
+                  :status "FETCHED"
+                  :tags '("networking", "router")
+                  :file-type "PDF"
+                  :topic-category #{"topic" "category"}
+                  :summary "Summary for one"
+                  :correlation-id "c1"},
+                  {:id "2"
+                   :uri "file://Users/vvaidyan/Documents/two.txt"
+                   :status "FETCHED"
+                   :tags '("agile", "pairing")
+                   :file-type "PDF"
+                   :topic-category #{"topic" "category"}
+                   :summary "Summary for two",
+                   :correlation-id "c2"},
+                  {:id "3"
+                   :uri "file://Users/vvaidyan/Documents/three.txt"
+                   :status "FETCHED"
+                   :tags '("tdd", "testing")
+                   :file-type "PDF"
+                   :topic-category #{"topic" "category"}
+                   :summary "Summary for three"
+                   :correlation-id "c3"}))

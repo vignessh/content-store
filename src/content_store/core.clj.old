@@ -1,0 +1,65 @@
+(ns content-store.core
+  (:require [clojurewerkz.welle.core :as wc]
+            [clojurewerkz.welle.buckets :as wb]
+            [clojurewerkz.welle.kv :as kv])
+  (:import com.basho.riak.client.http.util.Constants))
+
+(def BUCKET "document")
+
+(defn fetch[key]
+  (wc/with-client
+    (wc/connect)
+    (:value (first (kv/fetch BUCKET key)))))
+
+(defn fetch-all[ks]
+  (wc/with-client
+    (wc/connect)
+    (reduce #(conj (:value (first (kv/fetch BUCKET %2))) %1) [] ks)))
+
+(defn store
+  "The value must of the form
+  {:modelling-status :FETCHED,
+   :uri ,
+   :meta-data {},
+   :delivery-status :FETCHED,
+   :summary-status :FETCHED}"
+  [key value]
+  (wc/with-client
+    (wc/connect)
+    (kv/store BUCKET key value Constants/CTYPE_JSON)))
+
+(* 2 3 (+ 4 5))
+
+(list 1 2 3)
+
+(def mylist '(1 2 3))
+
+(def myvector [1 2 3])
+
+(def myset #{1 2 3})
+
+(def mymap {"key" "value", :key value})
+
+(mymap :key)
+
+(mymap "key")
+
+(get myvector 1)
+
+(myvector 1)
+
+(defn add [a b]
+;  (+ a b))
+  (apply + a b))
+
+(def add (fn[a b]
+           (+ a b)))
+
+(map (fn [item] (* item 2)) myvector)
+
+(map #(* %1 2) myvector)
+
+
+
+
+
